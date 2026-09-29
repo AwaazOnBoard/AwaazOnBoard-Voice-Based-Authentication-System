@@ -33,7 +33,7 @@ import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from fastapi import Depends
-from src.database import get_db
+from src.database import get_db, engine, Base
 from src.models import User, Enrollment, AuditLog, EnterpriseAPI
 
 # --- SUPPRESS THIRD-PARTY WARNINGS ---
@@ -80,6 +80,10 @@ def cleanup_temp_file(filepath: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 0. Provision database tables (safe no-op on Postgres, essential for in-memory SQLite)
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database tables dynamically verified/created.")
+
     # 1. Boot up the Server & Models
     print("🚀 FASTAPI STARTUP: Loading AI Models into VRAM...")
     load_dotenv()
