@@ -14,17 +14,15 @@ env_path = os.path.join(backend_dir, '.env')
 load_dotenv(env_path)
 
 # --- IMPORT YOUR MODELS ---
-from src.database import Base
+from src.database import Base, engine as app_engine
 from src.models import User, Enrollment, AuditLog, EnterpriseAPI
 
 config = context.config
 
 # --- INJECT YOUR DATABASE URL ---
-db_url = os.getenv("DATABASE_URL")
-if not db_url:
-    raise ValueError(f"CRITICAL ERROR: Could not find DATABASE_URL in {env_path}. Did you add it to your .env file?")
-
-config.set_main_option("sqlalchemy.url", db_url)
+# Use the engine URL that database.py resolved (Postgres or SQLite fallback)
+resolved_url = str(app_engine.url)
+config.set_main_option("sqlalchemy.url", resolved_url)
 
 # --- SET METADATA ---
 target_metadata = Base.metadata
@@ -47,6 +45,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=True,  # Required for SQLite ALTER TABLE support
     )
 
     with context.begin_transaction():
@@ -68,7 +67,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True,  # Required for SQLite ALTER TABLE support
         )
 
         with context.begin_transaction():
@@ -79,3 +80,4 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+
