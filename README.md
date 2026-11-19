@@ -128,6 +128,19 @@ real-time-speaker-verification-ecapa/
 
 ## Quick Start
 
+### Run the demo on Windows (one click)
+
+Double-click **`Run_AwaazOnboard.bat`** in the repository root. It:
+
+1. starts PostgreSQL 15 in Docker (container `awaaz-pg`, data kept in the `awaaz_pg` volume);
+2. opens one window each for the Awaaz identity provider (port 8000), the FinSecure bank API (8001), the admin console (3000) and the bank UI (3001);
+3. waits for the identity provider to load its models and confirms it is connected to PostgreSQL;
+4. opens the bank UI and the admin console in the browser.
+
+Press any key in the launcher window to stop every service. Requirements: Docker Desktop running, Node.js 18 or later, and the Python environment in `backend/venv` (created as in step 2 below). The first run downloads the PostgreSQL image and, if they are not cached yet, the Whisper and pyannote models (`HF_TOKEN` in `backend/.env`).
+
+### Manual setup
+
 This system is built with a decoupled architecture. You will need to run the FastAPI machine learning backend and the Next.js enterprise frontend simultaneously.
 
 ### Prerequisites
