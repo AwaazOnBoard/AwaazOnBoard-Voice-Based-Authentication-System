@@ -304,8 +304,9 @@ export default function ApiManagementPage() {
       fd.append("take_1", take1.blob!, "take_1.webm");
       fd.append("take_2", take2.blob!, "take_2.webm");
       fd.append("take_3", take3.blob!, "take_3.webm");
+      fd.append("sandbox", "true"); // sandbox is a form field on the backend
 
-      const res = await fetch("/api/customers/enroll?sandbox=true", { method: "POST", body: fd });
+      const res = await fetch("/api/customers/enroll", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
       setEnrollStatus("success");
@@ -386,8 +387,9 @@ export default function ApiManagementPage() {
         fd.append("user_id", cnicDigits);
         // The backend field is `voice` on /authenticate/verify
         fd.append("voice", audioBlob, "response.webm");
+        fd.append("sandbox", "true"); // sandbox is a form field on the backend
 
-        res = await fetch("/api/authenticate/verify?sandbox=true", { method: "POST", body: fd });
+        res = await fetch("/api/authenticate/verify", { method: "POST", body: fd });
       }
 
       const elapsed = Math.round(performance.now() - startRef.current);
