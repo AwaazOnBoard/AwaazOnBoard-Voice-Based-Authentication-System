@@ -25,7 +25,7 @@ import uuid
 import os
 import shutil
 from pydub import AudioSegment
-from fastapi import Form, File, UploadFile, HTTPException, Depends, Request, Response
+from fastapi import Form, File, UploadFile, HTTPException, Depends, Request, Response, Query
 import numpy as np
 import torch
 import datetime
@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
         if seed_db.query(User).count() == 0:
             _seed_users = [
                 {"user_id": "0000000000000", "cnic": "0000000000000",
-                 "full_name": "Enterprise Admin", "password": "admin123"},
+                 "full_name": "Super Admin", "password": "admin123"},
                 {"user_id": "1111111111111", "cnic": "1111111111111",
                  "full_name": "Demo Evaluator", "password": "demo123"},
             ]
@@ -260,9 +260,11 @@ async def health_check():
 # --- PROFILE ENDPOINTS ---
 
 @app.get("/profile")
-async def get_profile(user_id: str, db: Session = Depends(get_db)):
-    """Returns the user's profile data."""
-    normalized = user_id.replace("-", "").replace(" ", "").strip()
+async def get_profile(request: Request, user_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """Returns the logged-in user's profile data. Identity comes from the session cookie;
+    the user_id query parameter is accepted for frontend compatibility but ignored (spoofable)."""
+    current_user = await get_current_user(request, db)
+    normalized = current_user["cnic"]
     user = db.query(User).filter(User.user_id == normalized).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -281,9 +283,11 @@ async def get_profile(user_id: str, db: Session = Depends(get_db)):
     }
 
 @app.put("/profile")
-async def update_profile(payload: ProfileUpdate, db: Session = Depends(get_db)):
-    """Updates the user's profile fields."""
-    normalized = payload.user_id.replace("-", "").replace(" ", "").strip()
+async def update_profile(payload: ProfileUpdate, request: Request, db: Session = Depends(get_db)):
+    """Updates the logged-in user's profile fields. Identity comes from the session cookie;
+    payload.user_id is ignored (spoofable)."""
+    current_user = await get_current_user(request, db)
+    normalized = current_user["cnic"]
     user = db.query(User).filter(User.user_id == normalized).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -312,9 +316,11 @@ async def update_profile(payload: ProfileUpdate, db: Session = Depends(get_db)):
     }
 
 @app.put("/profile/password")
-async def change_password(payload: PasswordChange, db: Session = Depends(get_db)):
-    """Changes the user's password after verifying the current one."""
-    normalized = payload.user_id.replace("-", "").replace(" ", "").strip()
+async def change_password(payload: PasswordChange, request: Request, db: Session = Depends(get_db)):
+    """Changes the logged-in user's password after verifying the current one.
+    Identity comes from the session cookie; payload.user_id is ignored (spoofable)."""
+    current_user = await get_current_user(request, db)
+    normalized = current_user["cnic"]
     user = db.query(User).filter(User.user_id == normalized).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -452,9 +458,11 @@ async def enroll_user(
             cleanup_temp_file(f)
 
 @app.delete("/enroll")
-async def revoke_enrollment(user_id: str, db: Session = Depends(get_db)):
-    """Revokes a user's voice enrollment: deletes the DB record and the .pt template file."""
-    normalized = user_id.replace("-", "").replace(" ", "").strip()
+async def revoke_enrollment(request: Request, user_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """Revokes the logged-in user's own voice enrollment: deletes the DB record and the .pt
+    template file. Identity comes from the session cookie; user_id is ignored (spoofable)."""
+    current_user = await get_current_user(request, db)
+    normalized = current_user["cnic"]
     enrollment = db.query(Enrollment).filter(Enrollment.user_id == normalized).first()
     if not enrollment:
         raise HTTPException(status_code=404, detail="No voice enrollment found for this user.")
@@ -474,9 +482,16 @@ async def revoke_enrollment(user_id: str, db: Session = Depends(get_db)):
     return {"status": "success", "message": "Voice profile revoked successfully."}
 
 @app.delete("/customers/enroll")
-async def revoke_customer_enrollment(customer_cnic: str, db: Session = Depends(get_db)):
-    """Permanently deletes a customer's voice enrollment, template file, and Customer record."""
+async def revoke_customer_enrollment(customer_cnic: str, request: Request, db: Session = Depends(get_db)):
+    """Permanently deletes a customer's voice enrollment, template file, and Customer record.
+    Requires an operator session; a standard operator may delete only customers they enrolled,
+    while the super admin may delete any customer."""
+    current_user = await get_current_user(request, db)
     normalized = customer_cnic.replace("-", "").replace(" ", "").strip()
+    owner = db.query(Customer).filter(Customer.customer_id == normalized).first()
+    if not _is_super_admin(current_user["cnic"]):
+        if owner is None or _normalize_cnic(owner.admin_user_id or "") != current_user["cnic"]:
+            raise HTTPException(status_code=404, detail="No customer enrollment found for this CNIC.")
 
     # 1. Find and delete the CustomerEnrollment record
     enrollment = db.query(CustomerEnrollment).filter(
@@ -519,6 +534,7 @@ async def enroll_customer(
     imei: Optional[str] = Form(None),
     admin_user_id: Optional[str] = Form(None),
     sandbox: bool = Form(False),
+    sandbox_query: Optional[bool] = Query(None, alias="sandbox"),
     db: Session = Depends(get_db)
 ):
     """Enrolls an external customer's voice. Auto-creates their Customer record if needed.
@@ -527,6 +543,7 @@ async def enroll_customer(
     rows are written to the database, and the generated .pt template is cleaned up
     automatically so the disk stays pristine.
     """
+    sandbox = bool(sandbox or sandbox_query)  # the console sends ?sandbox=true; forms send a field
     # Normalize and validate the customer's CNIC
     normalized_cnic = validate_cnic(customer_cnic)
 
@@ -675,7 +692,7 @@ async def verify_user(
             
         # STAGE 2: ASR Check (Active Liveness)
         transcription = models["asr"].transcribe(temp_audio_path)
-        log_entry.transcribed_text = transcription
+        log_entry.transcribed_text = " ".join(map(str, transcription)) if isinstance(transcription, (list, tuple)) else transcription
         validation = models["validator"].evaluate_challenge(expected_sequence, transcription)
         
         if not validation["liveness_passed"]:
@@ -962,6 +979,7 @@ async def verify_voice(
     user_id: str = Form(...),  # The CNIC
     voice: UploadFile = File(...),
     sandbox: bool = Form(False),
+    sandbox_query: Optional[bool] = Query(None, alias="sandbox"),
     db: Session = Depends(get_db)
 ):
     """Full Pipeline: Gatekeeper -> ASR Liveness -> Multi-Template ECAPA -> Database.
@@ -971,7 +989,8 @@ async def verify_voice(
     deleted from data/enrollments/ at the end of the request so sandbox runs are ephemeral.
     """
     start_time = time.perf_counter()
-    
+    sandbox = bool(sandbox or sandbox_query)  # the console sends ?sandbox=true; forms send a field
+
     expected_sequence = active_sessions.get(session_id)
     if not expected_sequence:
         raise HTTPException(status_code=400, detail="Invalid or expired session.")
@@ -1211,6 +1230,8 @@ async def verify_voice(
 
         return final_response
 
+    except HTTPException:
+        raise  # keep intended 4xx responses (e.g. missing template -> 400)
     except Exception as e:
         print(f"Verification Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1338,11 +1359,13 @@ def _is_super_admin(user_id: str) -> bool:
 
 @app.get("/authenticate/sessions")
 async def get_real_sessions(
-    user_id: Optional[str] = None,
+    user_id: Optional[str] = None,  # Accepted for frontend compatibility; IGNORED (spoofable).
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Fetches the actual session history from the database.
+    """Fetches the actual session history from the database for the logged-in operator.
     Super Admin (CNIC 0000000000000) sees ALL logs; others see only their own."""
+    user_id = current_user["cnic"]
     try:
         query = db.query(AuditLog).order_by(desc(AuditLog.id))
         

@@ -54,10 +54,6 @@ export default function HomePage() {
             </Link>
           </div>
 
-          {/* Trust Line */}
-          <p className="mt-8 text-xs text-neutral-600">
-            No credit card required · SOC-2 compliant · 99.97% uptime SLA
-          </p>
         </div>
 
         {/* Right Column — Hero Graphic in Arched Pill Container */}
